@@ -1,14 +1,14 @@
 <?php
 /**
  * Plugin Name: WP Rocket Cache Status Monitor
- * Description: Painel para acompanhar o status do preload do WP Rocket (pending, in-progress, completed, failed): filtro por tipo de conteúdo, paginação, ações diretas (recarregar/remover URL, recarregar tudo), diagnóstico de causa de falha (checagem HTTP + saúde do cron) e cache de classificação para performance. Genérico, sem dependências de projeto específico.
+ * Description: Dashboard for tracking WP Rocket's preload status (pending, in-progress, completed, failed): content-type filter, pagination, direct actions (reload/remove a URL, reload everything), root-cause diagnostics (HTTP check + cron health), and a classification cache for performance. Generic, with no project-specific dependencies.
  * Version: 1.2.0
  * Author: Marcio Yamashita
  * Text Domain: wprsm
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
-	exit; // Bloqueia acesso direto.
+	exit; // Block direct access.
 }
 
 class WPRSM_Status_Monitor {
@@ -16,17 +16,17 @@ class WPRSM_Status_Monitor {
 	const CAPABILITY      = 'manage_options';
 	const PAGE_SLUG        = 'wprsm-cache-status';
 	const PER_PAGE          = 50;
-	// Limite de linhas lidas do banco por carregamento de página. A classificação por
-	// tipo é feita em PHP, então esse teto evita processar tabelas gigantes de uma vez.
+	// Max rows read from the DB per page load. Type classification happens in PHP,
+	// so this cap avoids processing huge tables all at once.
 	const FETCH_CAP         = 5000;
-	// Quanto tempo (segundos) uma URL pode ficar em pending/in-progress antes de ser
-	// sinalizada como "provavelmente travada".
-	const STUCK_THRESHOLD   = 900; // 15 minutos.
-	// Cache de classificação por URL (evita reprocessar url_to_postid/regex a cada carregamento).
+	// How long (seconds) a URL can stay pending/in-progress before being flagged
+	// as "probably stuck".
+	const STUCK_THRESHOLD   = 900; // 15 minutes.
+	// Per-URL type classification cache (avoids re-running url_to_postid/regex on every load).
 	const TYPE_CACHE_KEY    = 'wprsm_url_type_cache';
 	const TYPE_CACHE_TTL    = 12 * HOUR_IN_SECONDS;
 	const TYPE_CACHE_MAX    = 20000;
-	// Hook de cron que o WP Rocket usa para processar a fila de preload.
+	// Cron hook WP Rocket uses to process the preload queue.
 	const PRELOAD_CRON_HOOK = 'rocket_preload_process_pending';
 
 	public function __construct() {
@@ -39,22 +39,22 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Registra a página no admin, dentro do menu do WP Rocket se ele existir,
-	 * senão cria um menu próprio.
+	 * Registers the admin page, nested under the WP Rocket menu if it exists,
+	 * otherwise creates its own top-level menu.
 	 */
 	public function register_admin_page() {
 		if ( menu_page_url( 'wprocket', false ) ) {
 			add_submenu_page(
 				'wprocket',
-				__( 'Status do Cache', 'wprsm' ),
-				__( 'Status do Cache', 'wprsm' ),
+				__( 'Cache Status', 'wprsm' ),
+				__( 'Cache Status', 'wprsm' ),
 				self::CAPABILITY,
 				self::PAGE_SLUG,
 				array( $this, 'render_page' )
 			);
 		} else {
 			add_menu_page(
-				__( 'Status do Cache (WP Rocket)', 'wprsm' ),
+				__( 'Cache Status (WP Rocket)', 'wprsm' ),
 				__( 'Cache Status', 'wprsm' ),
 				self::CAPABILITY,
 				self::PAGE_SLUG,
@@ -66,7 +66,7 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Retorna o nome da tabela de preload do WP Rocket.
+	 * Returns the name of the WP Rocket preload table.
 	 */
 	private function get_table_name() {
 		global $wpdb;
@@ -74,7 +74,7 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Verifica se a tabela existe.
+	 * Checks whether the table exists.
 	 */
 	private function table_exists() {
 		global $wpdb;
@@ -84,8 +84,8 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Monta a URL atual (com todos os filtros/paginação) para usar como "voltar para cá"
-	 * depois de uma ação (reload/remove/reload all).
+	 * Builds the current URL (with all filters/pagination) to use as the "come back here"
+	 * target after an action (reload/remove/reload all).
 	 */
 	private function current_filtered_url() {
 		$base_url = menu_page_url( self::PAGE_SLUG, false );
@@ -101,15 +101,15 @@ class WPRSM_Status_Monitor {
 	}
 
 	// -----------------------------------------------------------------
-	// AÇÕES DIRETAS
+	// DIRECT ACTIONS
 	// -----------------------------------------------------------------
 
 	/**
-	 * Recoloca uma única URL na fila de preload (status volta para "pending").
+	 * Puts a single URL back in the preload queue (status goes back to "pending").
 	 */
 	public function handle_reload_url() {
 		if ( ! current_user_can( self::CAPABILITY ) ) {
-			wp_die( esc_html__( 'Sem permissão.', 'wprsm' ) );
+			wp_die( esc_html__( 'You do not have permission to do this.', 'wprsm' ) );
 		}
 
 		$id = isset( $_POST['id'] ) ? intval( $_POST['id'] ) : 0;
@@ -135,11 +135,11 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Remove uma URL da fila de preload (delete da linha).
+	 * Removes a URL from the preload queue (deletes the row).
 	 */
 	public function handle_remove_url() {
 		if ( ! current_user_can( self::CAPABILITY ) ) {
-			wp_die( esc_html__( 'Sem permissão.', 'wprsm' ) );
+			wp_die( esc_html__( 'You do not have permission to do this.', 'wprsm' ) );
 		}
 
 		$id = isset( $_POST['id'] ) ? intval( $_POST['id'] ) : 0;
@@ -158,13 +158,13 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Limpa e recarrega o cache inteiro do site, usando a função nativa do WP Rocket
-	 * quando disponível (mesma usada pelo botão "Limpar e gerar cache" da admin bar).
-	 * Fallback: marca as linhas "completed" como "pending" pra forçar reprocessamento.
+	 * Clears and reloads the whole site cache, using WP Rocket's native function
+	 * when available (the same one used by the "Clear and preload cache" admin bar button).
+	 * Fallback: marks "completed" rows as "pending" to force reprocessing.
 	 */
 	public function handle_reload_all() {
 		if ( ! current_user_can( self::CAPABILITY ) ) {
-			wp_die( esc_html__( 'Sem permissão.', 'wprsm' ) );
+			wp_die( esc_html__( 'You do not have permission to do this.', 'wprsm' ) );
 		}
 
 		check_admin_referer( 'wprsm_reload_all' );
@@ -180,8 +180,8 @@ class WPRSM_Status_Monitor {
 			$wpdb->query( "UPDATE {$table} SET status = 'pending' WHERE status = 'completed'" ); // phpcs:ignore
 		}
 
-		// A lista inteira vai mudar de status, então o cache de tipos continua válido,
-		// mas não custa nada garantir que a próxima leitura não fique presa numa página vazia.
+		// The whole list is about to change status, so the type cache stays valid,
+		// but it doesn't hurt to make sure the next read doesn't land on an empty page.
 		$redirect = isset( $_POST['redirect_to'] ) ? esc_url_raw( wp_unslash( $_POST['redirect_to'] ) ) : $this->current_filtered_url();
 		$redirect = remove_query_arg( 'wprsm_paged', $redirect );
 		wp_safe_redirect( add_query_arg( 'wprsm_notice', $notice, $redirect ) );
@@ -189,14 +189,14 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Força a execução imediata do evento de cron do preload, DENTRO da própria
-	 * requisição do admin — não depende de wp-cron.php nem de requisição de loopback,
-	 * então funciona mesmo com DISABLE_WP_CRON ativo e cron real do servidor configurado.
-	 * Usa os mesmos argumentos com que o evento foi agendado, quando existirem.
+	 * Forces the preload cron event to run immediately, WITHIN the current admin
+	 * request — doesn't depend on wp-cron.php or a loopback request, so it works
+	 * even with DISABLE_WP_CRON active and a real server cron configured.
+	 * Uses the same args the event was scheduled with, when they exist.
 	 */
 	public function handle_run_cron_now() {
 		if ( ! current_user_can( self::CAPABILITY ) ) {
-			wp_die( esc_html__( 'Sem permissão.', 'wprsm' ) );
+			wp_die( esc_html__( 'You do not have permission to do this.', 'wprsm' ) );
 		}
 
 		check_admin_referer( 'wprsm_run_cron_now' );
@@ -216,16 +216,17 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Gera o cache de UMA URL específica agora, na hora, sem depender da ordem da fila
-	 * de preload. Funciona fazendo uma requisição HTTP real pra URL — é exatamente
-	 * assim que o WP Rocket gera o HTML estático (no request em si, via buffer), então
-	 * isso tem o mesmo efeito de um visitante real acessar a página, mas sob demanda.
-	 * Aceita 'id' (linha da fila) ou 'url' direto (ex: a home, mesmo que não esteja
-	 * destacada na lista de pendentes).
+	 * Generates the cache for ONE specific URL right now, without waiting for its
+	 * turn in the preload queue. Works by making a real HTTP request to the URL —
+	 * that's exactly how WP Rocket generates the static HTML (during the request
+	 * itself, via the output buffer), so this has the same effect as a real visitor
+	 * hitting the page, but on demand.
+	 * Accepts 'id' (a queue row) or a direct 'url' (e.g. the home page, even if it's
+	 * not highlighted in the pending list).
 	 */
 	public function handle_generate_cache() {
 		if ( ! current_user_can( self::CAPABILITY ) ) {
-			wp_die( esc_html__( 'Sem permissão.', 'wprsm' ) );
+			wp_die( esc_html__( 'You do not have permission to do this.', 'wprsm' ) );
 		}
 
 		$id  = isset( $_POST['id'] ) ? intval( $_POST['id'] ) : 0;
@@ -248,7 +249,7 @@ class WPRSM_Status_Monitor {
 		$user_key = 'wprsm_notice_' . get_current_user_id();
 
 		if ( ! $url ) {
-			set_transient( $user_key, array( 'type' => 'error', 'message' => __( 'Nenhuma URL válida informada.', 'wprsm' ) ), 60 );
+			set_transient( $user_key, array( 'type' => 'error', 'message' => __( 'No valid URL was provided.', 'wprsm' ) ), 60 );
 		} else {
 			$site_host = wp_parse_url( home_url(), PHP_URL_HOST );
 			$url_host  = wp_parse_url( $url, PHP_URL_HOST );
@@ -256,13 +257,13 @@ class WPRSM_Status_Monitor {
 			if ( ! $url_host || strtolower( $url_host ) !== strtolower( (string) $site_host ) ) {
 				set_transient( $user_key, array(
 					'type'    => 'error',
-					/* translators: %s: host esperado. */
-					'message' => sprintf( __( 'A URL precisa ser do próprio site (%s).', 'wprsm' ), $site_host ),
+					/* translators: %s: expected host. */
+					'message' => sprintf( __( 'The URL must belong to this site (%s).', 'wprsm' ), $site_host ),
 				), 60 );
 			} else {
-				// Usa o mesmo user-agent que o WP Rocket usa no preload de verdade
-				// (documentado pelo próprio WP Rocket) — algumas regras de exclusão de
-				// cache/hosting podem se comportar diferente dependendo do user-agent.
+				// Use the same user agent WP Rocket's real preload uses (as documented by
+				// WP Rocket itself) — some cache/hosting exclusion rules can behave
+				// differently depending on the user agent.
 				$response = wp_remote_get(
 					$url,
 					array(
@@ -277,41 +278,41 @@ class WPRSM_Status_Monitor {
 
 				if ( is_wp_error( $response ) ) {
 					set_transient( $user_key, array(
-						/* translators: 1: URL, 2: mensagem de erro. */
+						/* translators: 1: URL, 2: error message. */
 						'type'    => 'error',
-						'message' => sprintf( __( 'Falha ao acessar %1$s: %2$s', 'wprsm' ), $url, $response->get_error_message() ),
+						'message' => sprintf( __( 'Failed to reach %1$s: %2$s', 'wprsm' ), $url, $response->get_error_message() ),
 					), 60 );
 				} else {
 					$code = wp_remote_retrieve_response_code( $response );
 
-					// Prova real: existe um arquivo de cache em disco, e ele é recente?
+					// Real proof: does a cache file exist on disk, and is it fresh?
 					$cache_file    = $this->cache_file_path( $url );
 					$file_exists   = file_exists( $cache_file );
 					$file_is_fresh = $file_exists && ( time() - filemtime( $cache_file ) ) < 120;
 
 					if ( $code >= 400 ) {
-						$msg  = sprintf( __( 'A URL respondeu HTTP %d — não deveria ter sido cacheada.', 'wprsm' ), $code );
+						$msg  = sprintf( __( 'The URL responded with HTTP %d — it should not have been cached.', 'wprsm' ), $code );
 						$type = 'error';
 					} elseif ( $file_is_fresh ) {
 						$msg  = sprintf(
-							/* translators: 1: URL, 2: data/hora de geração do arquivo. */
-							__( 'Confirmado: arquivo de cache gerado agora para %1$s (%2$s).', 'wprsm' ),
+							/* translators: 1: URL, 2: file generation date/time. */
+							__( 'Confirmed: cache file generated just now for %1$s (%2$s).', 'wprsm' ),
 							$url,
 							wp_date( 'd/m/Y H:i:s', filemtime( $cache_file ) )
 						);
 						$type = 'success';
 					} elseif ( $file_exists ) {
 						$msg  = sprintf(
-							/* translators: 1: URL, 2: data/hora do arquivo existente. */
-							__( 'A requisição teve HTTP %1$d, mas o arquivo de cache em disco não é recente (última geração: %2$s) — pode não ter sido esta requisição que o gerou.', 'wprsm' ),
+							/* translators: 1: HTTP code, 2: existing file date/time. */
+							__( 'The request returned HTTP %1$d, but the cache file on disk is not recent (last generated: %2$s) — this request may not be what generated it.', 'wprsm' ),
 							$code,
 							wp_date( 'd/m/Y H:i:s', filemtime( $cache_file ) )
 						);
 						$type = 'warning';
 					} else {
 						$msg = sprintf(
-							/* translators: 1: URL, 2: caminho esperado do arquivo de cache. */
-							__( 'A requisição teve HTTP %1$d, mas NENHUM arquivo de cache foi encontrado em %2$s. Prováveis causas: a URL está excluída do cache do WP Rocket, WP_CACHE não está ativo, ou existe um cache de borda do hosting/CDN na frente do WordPress respondendo antes dele.', 'wprsm' ),
+							/* translators: 1: HTTP code, 2: expected cache file path. */
+							__( 'The request returned HTTP %1$d, but NO cache file was found at %2$s. Likely causes: the URL is excluded from WP Rocket\'s cache, WP_CACHE is not enabled, or there is an edge cache from your hosting/CDN in front of WordPress responding before it does.', 'wprsm' ),
 							$code,
 							str_replace( ABSPATH, '', $cache_file )
 						);
@@ -329,10 +330,10 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Caminho esperado do arquivo de cache estático que o WP Rocket gera pra uma URL,
-	 * seguindo a estrutura padrão dele: wp-content/cache/wp-rocket/{host}/{path}/index.html.
-	 * Essa é a fonte de verdade real — bem mais confiável do que confiar só no HTTP 200
-	 * da requisição ou no status gravado na tabela wpr_rocket_cache.
+	 * Expected path of the static cache file WP Rocket generates for a URL, following
+	 * its default structure: wp-content/cache/wp-rocket/{host}/{path}/index.html.
+	 * This is the real source of truth — much more reliable than trusting just the
+	 * request's HTTP 200 or the status stored in the wpr_rocket_cache table.
 	 */
 	private function cache_file_path( $url ) {
 		$parsed = wp_parse_url( $url );
@@ -345,12 +346,12 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Detecta hospedagens gerenciadas conhecidas por desativar automaticamente o page
-	 * caching em disco do WP Rocket (documentado oficialmente pelo próprio WP Rocket:
-	 * Kinsta, WP Engine, Pressable, Flywheel, SpinupWP, WordPress.com, entre outros).
-	 * Detecção é só por sinais técnicos genéricos do ambiente — nada específico de projeto.
-	 * Cobre com confiança os dois hosts com forma de detecção documentada publicamente;
-	 * para os demais da lista, não arriscamos "adivinhar" e deixamos a nota genérica.
+	 * Detects managed hosts known to automatically disable WP Rocket's disk-based
+	 * page caching (officially documented by WP Rocket itself: Kinsta, WP Engine,
+	 * Pressable, Flywheel, SpinupWP, WordPress.com, among others).
+	 * Detection relies only on generic environment signals — nothing project-specific.
+	 * Confidently covers the two hosts with a publicly documented detection method;
+	 * for the rest of the list, we don't risk "guessing" and just show a generic note.
 	 */
 	private function detect_managed_host() {
 		$result = array(
@@ -370,13 +371,13 @@ class WPRSM_Status_Monitor {
 	}
 
 	// -----------------------------------------------------------------
-	// CLASSIFICAÇÃO DE TIPO (com cache para performance)
+	// TYPE CLASSIFICATION (with cache for performance)
 	// -----------------------------------------------------------------
 
 	/**
-	 * Tipos possíveis de conteúdo. Chave interna => label exibida.
-	 * Genérico: não depende de post types ou taxonomias específicas de nenhum projeto,
-	 * pois consulta o que está registrado no site em tempo de execução.
+	 * Possible content types. Internal key => displayed label.
+	 * Generic: doesn't depend on any project's specific post types or taxonomies,
+	 * since it queries whatever is registered on the site at runtime.
 	 */
 	private function type_labels() {
 		return array(
@@ -385,14 +386,14 @@ class WPRSM_Status_Monitor {
 			'single'   => __( 'Single', 'wprsm' ),
 			'taxonomy' => __( 'Taxonomy', 'wprsm' ),
 			'archive'  => __( 'Archive', 'wprsm' ),
-			'other'    => __( 'Outro', 'wprsm' ),
+			'other'    => __( 'Other', 'wprsm' ),
 		);
 	}
 
 	/**
-	 * Classifica a URL usando os post types e taxonomias registrados no site
-	 * (nada fixo/hardcoded), com fallback por padrões comuns de URL.
-	 * Retorna a CHAVE do tipo (ver type_labels()).
+	 * Classifies the URL using the post types and taxonomies registered on the site
+	 * (nothing hardcoded), with a fallback based on common URL patterns.
+	 * Returns the type KEY (see type_labels()).
 	 */
 	private function classify_url_raw( $url ) {
 		$home_url = trailingslashit( home_url() );
@@ -402,7 +403,7 @@ class WPRSM_Status_Monitor {
 			return 'home';
 		}
 
-		// 1) Conteúdo singular (post, page, ou qualquer custom post type).
+		// 1) Singular content (post, page, or any custom post type).
 		$post_id = url_to_postid( $url );
 		if ( $post_id ) {
 			return ( 'page' === get_post_type( $post_id ) ) ? 'page' : 'single';
@@ -412,7 +413,7 @@ class WPRSM_Status_Monitor {
 		$path_only = isset( $parsed['path'] ) ? trim( $parsed['path'], '/' ) : '';
 		$segments  = $path_only ? explode( '/', $path_only ) : array();
 
-		// 2) Archive de taxonomia (category, tag, ou qualquer taxonomia customizada pública).
+		// 2) Taxonomy archive (category, tag, or any public custom taxonomy).
 		foreach ( get_taxonomies( array( 'public' => true ), 'objects' ) as $tax ) {
 			$slug = ! empty( $tax->rewrite['slug'] ) ? trim( $tax->rewrite['slug'], '/' ) : $tax->name;
 			if ( $slug && in_array( $slug, $segments, true ) ) {
@@ -420,7 +421,7 @@ class WPRSM_Status_Monitor {
 			}
 		}
 
-		// 3) Archive de post type customizado com arquivo próprio (has_archive).
+		// 3) Custom post type archive with its own archive page (has_archive).
 		foreach ( get_post_types( array( 'public' => true, 'has_archive' => true ), 'objects' ) as $pt ) {
 			$slug = is_string( $pt->has_archive )
 				? trim( $pt->has_archive, '/' )
@@ -430,7 +431,7 @@ class WPRSM_Status_Monitor {
 			}
 		}
 
-		// 4) Archive de autor ou por data (padrões nativos do WP).
+		// 4) Author or date archive (native WP patterns).
 		if ( in_array( 'author', $segments, true ) ) {
 			return 'archive';
 		}
@@ -442,14 +443,14 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Classifica um lote de URLs usando um cache persistente (transient) por URL.
-	 * Isso evita reprocessar url_to_postid()/regex pra URLs já vistas em carregamentos
-	 * anteriores — só URLs novas ou que saíram do cache (TTL) são recalculadas.
-	 * Faz apenas 1 leitura e, no máximo, 1 gravação de transient por carregamento de página,
-	 * independente de quantas linhas existam.
+	 * Classifies a batch of URLs using a persistent (transient) cache per URL.
+	 * Avoids reprocessing url_to_postid()/regex for URLs already seen in previous
+	 * page loads — only new URLs, or ones that fell out of the cache (TTL), are
+	 * recalculated. Does at most 1 transient read and 1 transient write per page
+	 * load, regardless of how many rows exist.
 	 *
-	 * @param string[] $urls Lista de URLs a classificar.
-	 * @return array URL => chave do tipo.
+	 * @param string[] $urls List of URLs to classify.
+	 * @return array URL => type key.
 	 */
 	private function classify_urls_cached( array $urls ) {
 		$cache   = get_transient( self::TYPE_CACHE_KEY );
@@ -480,26 +481,27 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Retorna label e cor para cada status.
+	 * Returns the label and color for each status.
 	 */
 	private function status_meta( $status ) {
 		$map = array(
-			'pending'     => array( 'label' => __( 'Pendente', 'wprsm' ), 'color' => '#8c8f94' ),
-			'in-progress' => array( 'label' => __( 'Em progresso', 'wprsm' ), 'color' => '#2271b1' ),
-			'completed'   => array( 'label' => __( 'Concluído', 'wprsm' ), 'color' => '#00a32a' ),
-			'failed'      => array( 'label' => __( 'Falhou', 'wprsm' ), 'color' => '#d63638' ),
+			'pending'     => array( 'label' => __( 'Pending', 'wprsm' ), 'color' => '#8c8f94' ),
+			'in-progress' => array( 'label' => __( 'In progress', 'wprsm' ), 'color' => '#2271b1' ),
+			'completed'   => array( 'label' => __( 'Completed', 'wprsm' ), 'color' => '#00a32a' ),
+			'failed'      => array( 'label' => __( 'Failed', 'wprsm' ), 'color' => '#d63638' ),
 		);
 
 		return isset( $map[ $status ] ) ? $map[ $status ] : array( 'label' => ucfirst( $status ), 'color' => '#646970' );
 	}
 
 	// -----------------------------------------------------------------
-	// DIAGNÓSTICO DE CAUSA
+	// ROOT-CAUSE DIAGNOSTICS
 	// -----------------------------------------------------------------
 
 	/**
-	 * Checa a saúde do cron de preload: se há um próximo agendamento e se o WP-Cron
-	 * "de visita" está desabilitado (o que exige cron real do servidor configurado).
+	 * Checks the health of the preload cron: whether there's a next scheduled run,
+	 * and whether the "visit-driven" WP-Cron is disabled (which requires a real
+	 * server cron to be configured).
 	 */
 	private function cron_health() {
 		return array(
@@ -510,8 +512,8 @@ class WPRSM_Status_Monitor {
 	}
 
 	/**
-	 * Faz uma checagem HTTP HEAD (sem seguir redirect) numa URL específica, pra ajudar
-	 * a diagnosticar por que ela falhou: 404, 403, redirect, timeout, etc.
+	 * Does an HTTP HEAD check (without following redirects) on a specific URL, to
+	 * help diagnose why it failed: 404, 403, redirect, timeout, etc.
 	 */
 	private function diagnose_url( $url ) {
 		$response = wp_remote_head(
@@ -527,8 +529,8 @@ class WPRSM_Status_Monitor {
 			return array(
 				'ok'      => false,
 				'summary' => sprintf(
-					/* translators: %s: mensagem de erro. */
-					__( 'Sem resposta (%s) — provável timeout ou bloqueio de rede.', 'wprsm' ),
+					/* translators: %s: error message. */
+					__( 'No response (%s) — likely a timeout or network block.', 'wprsm' ),
 					$response->get_error_message()
 				),
 			);
@@ -541,10 +543,10 @@ class WPRSM_Status_Monitor {
 			return array(
 				'ok'      => false,
 				'summary' => sprintf(
-					/* translators: 1: código HTTP, 2: URL de destino do redirect. */
+					/* translators: 1: HTTP code, 2: redirect target URL. */
 					__( 'Redirect %1$d → %2$s', 'wprsm' ),
 					$code,
-					$location ? $location : __( '(sem cabeçalho Location)', 'wprsm' )
+					$location ? $location : __( '(no Location header)', 'wprsm' )
 				),
 			);
 		}
@@ -553,8 +555,8 @@ class WPRSM_Status_Monitor {
 			return array(
 				'ok'      => false,
 				'summary' => sprintf(
-					/* translators: %d: código HTTP. */
-					__( 'Erro HTTP %d — URL pode estar indisponível, bloqueada ou não existir mais.', 'wprsm' ),
+					/* translators: %d: HTTP code. */
+					__( 'HTTP error %d — the URL may be unavailable, blocked, or no longer exist.', 'wprsm' ),
 					$code
 				),
 			);
@@ -563,8 +565,8 @@ class WPRSM_Status_Monitor {
 		return array(
 			'ok'      => true,
 			'summary' => sprintf(
-				/* translators: %d: código HTTP. */
-				__( 'HTTP %d — a URL respondeu normalmente. Se o preload ainda marcar como falha, o problema pode ser no processamento (timeout de geração), não no acesso.', 'wprsm' ),
+				/* translators: %d: HTTP code. */
+				__( 'HTTP %d — the URL responded normally. If preload still marks it as failed, the issue may be in processing (generation timeout), not access.', 'wprsm' ),
 				$code
 			),
 		);
@@ -576,27 +578,27 @@ class WPRSM_Status_Monitor {
 
 	public function render_page() {
 		if ( ! current_user_can( self::CAPABILITY ) ) {
-			wp_die( esc_html__( 'Sem permissão para acessar esta página.', 'wprsm' ) );
+			wp_die( esc_html__( 'You do not have permission to access this page.', 'wprsm' ) );
 		}
 
 		global $wpdb;
 		$table = $this->get_table_name();
 
-		echo '<div class="wrap"><h1>' . esc_html__( 'Status do Cache — WP Rocket Preload', 'wprsm' ) . '</h1>';
+		echo '<div class="wrap"><h1>' . esc_html__( 'Cache Status — WP Rocket Preload', 'wprsm' ) . '</h1>';
 
 		if ( ! $this->table_exists() ) {
-			echo '<div class="notice notice-error"><p>' . esc_html__( 'Tabela de preload do WP Rocket não encontrada. Verifique se o plugin está ativo e se o Preload já foi iniciado ao menos uma vez.', 'wprsm' ) . '</p></div></div>';
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'WP Rocket preload table not found. Check that the plugin is active and that Preload has run at least once.', 'wprsm' ) . '</p></div></div>';
 			return;
 		}
 
-		// Avisos de ação (reload/remove/reload all).
+		// Action notices (reload/remove/reload all).
 		$notice = isset( $_GET['wprsm_notice'] ) ? sanitize_key( wp_unslash( $_GET['wprsm_notice'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$notice_messages = array(
-			'reloaded'            => array( 'success', __( 'URL recolocada na fila (status voltou para "Pendente").', 'wprsm' ) ),
-			'removed'             => array( 'success', __( 'URL removida da fila de preload.', 'wprsm' ) ),
-			'reload_all_ok'       => array( 'success', __( 'Cache limpo e preload reiniciado para todo o site.', 'wprsm' ) ),
-			'reload_all_fallback' => array( 'warning', __( 'Função nativa do WP Rocket não encontrada; as URLs concluídas foram marcadas como pendentes para reprocessamento no próximo cron.', 'wprsm' ) ),
-			'cron_run_now'        => array( 'success', __( 'Evento de preload disparado agora, dentro desta requisição. Atualize a página em alguns segundos para ver o status mais recente.', 'wprsm' ) ),
+			'reloaded'            => array( 'success', __( 'URL added back to the queue (status is now "Pending").', 'wprsm' ) ),
+			'removed'             => array( 'success', __( 'URL removed from the preload queue.', 'wprsm' ) ),
+			'reload_all_ok'       => array( 'success', __( 'Cache cleared and preload restarted for the whole site.', 'wprsm' ) ),
+			'reload_all_fallback' => array( 'warning', __( "WP Rocket's native function was not found; completed URLs were marked as pending for reprocessing on the next cron run.", 'wprsm' ) ),
+			'cron_run_now'        => array( 'success', __( 'Preload event triggered now, within this request. Refresh the page in a few seconds to see the latest status.', 'wprsm' ) ),
 		);
 		if ( $notice && isset( $notice_messages[ $notice ] ) ) {
 			list( $type, $msg ) = $notice_messages[ $notice ];
@@ -610,61 +612,61 @@ class WPRSM_Status_Monitor {
 			echo '<div class="notice notice-' . esc_attr( $dynamic_notice['type'] ) . ' is-dismissible"><p>' . esc_html( $dynamic_notice['message'] ) . '</p></div>';
 		}
 
-		// --- Aviso de hosting gerenciado com page caching auto-desativado / staging ---
+		// --- Managed-host / staging notice (page caching auto-disabled) ---
 		$managed_host = $this->detect_managed_host();
 		$is_staging   = function_exists( 'wp_get_environment_type' ) && 'staging' === wp_get_environment_type();
 
 		if ( $managed_host['detected'] || $is_staging ) {
-			echo '<div class="notice notice-info"><p><strong>' . esc_html__( 'Aviso de compatibilidade de hosting:', 'wprsm' ) . '</strong></p><ul style="list-style:disc; margin-left:20px;">';
+			echo '<div class="notice notice-info"><p><strong>' . esc_html__( 'Hosting compatibility notice:', 'wprsm' ) . '</strong></p><ul style="list-style:disc; margin-left:20px;">';
 
 			if ( $managed_host['detected'] ) {
 				echo '<li>' . sprintf(
-					/* translators: %s: nome do host detectado. */
-					esc_html__( 'Este site está rodando em %s. Esse tipo de hospedagem gerenciada desativa automaticamente o page caching em disco do WP Rocket (inclusive o Preload) pra evitar conflito com o cache próprio dela — isso é comportamento esperado, documentado pelo próprio WP Rocket, não um erro deste plugin.', 'wprsm' ),
+					/* translators: %s: detected host name. */
+					esc_html__( 'This site is running on %s. This type of managed hosting automatically disables WP Rocket\'s disk-based page caching (including Preload) to avoid conflicting with its own cache — this is expected behavior, documented by WP Rocket itself, not an error in this plugin.', 'wprsm' ),
 					esc_html( $managed_host['host'] )
 				) . '</li>';
-				echo '<li>' . esc_html__( 'A pasta wp-content/cache/wp-rocket/ e a fila de preload abaixo tendem a ficar vazias ou "pendentes" para sempre nesse tipo de hospedagem — verifique o cache real pelo painel do provedor ou pelo header de resposta HTTP específico dele (ex: x-kinsta-cache no Kinsta).', 'wprsm' ) . '</li>';
+				echo '<li>' . esc_html__( 'The wp-content/cache/wp-rocket/ folder and the preload queue below tend to stay empty or "pending" forever on this type of hosting — check the real cache status through your provider\'s dashboard or its own HTTP response header (e.g. x-kinsta-cache on Kinsta).', 'wprsm' ) . '</li>';
 			}
 
 			if ( $is_staging ) {
-				echo '<li>' . esc_html__( 'Este ambiente está marcado como "staging" (wp_get_environment_type()). Muitos provedores de hospedagem desativam completamente qualquer cache de página em ambientes de staging por padrão, pra evitar conteúdo desatualizado durante testes.', 'wprsm' ) . '</li>';
+				echo '<li>' . esc_html__( 'This environment is flagged as "staging" (wp_get_environment_type()). Many hosting providers fully disable page caching on staging environments by default, to avoid stale content during testing.', 'wprsm' ) . '</li>';
 			}
 
-			echo '<li>' . esc_html__( 'Outras hospedagens gerenciadas com esse mesmo comportamento (não detectadas automaticamente aqui): Pressable, Flywheel, SpinupWP, WordPress.com, DreamPress, Savvii, entre outras. Vale checar a documentação do seu provedor se o comportamento aqui parecer estranho.', 'wprsm' ) . '</li>';
+			echo '<li>' . esc_html__( 'Other managed hosts with this same behavior (not automatically detected here): Pressable, Flywheel, SpinupWP, WordPress.com, DreamPress, Savvii, and others. Worth checking your provider\'s documentation if the behavior here looks off.', 'wprsm' ) . '</li>';
 			echo '</ul></div>';
 		}
 
-		// --- Diagnóstico de causa: saúde do cron ---
+		// --- Root-cause diagnostics: cron health ---
 		$pending_like = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE status IN ('pending','in-progress')" ); // phpcs:ignore
 		$cron         = $this->cron_health();
 
 		if ( $pending_like > 0 && ! $cron['next_scheduled'] ) {
-			echo '<div class="notice notice-error"><p><strong>' . esc_html__( 'Possível problema de cron:', 'wprsm' ) . '</strong> ' . esc_html__( 'há URLs pendentes/em progresso, mas não encontrei o próximo agendamento do evento de preload. O processamento pode estar travado.', 'wprsm' ) . '</p></div>';
+			echo '<div class="notice notice-error"><p><strong>' . esc_html__( 'Possible cron issue:', 'wprsm' ) . '</strong> ' . esc_html__( "there are pending/in-progress URLs, but I couldn't find the next scheduled run of the preload event. Processing may be stuck.", 'wprsm' ) . '</p></div>';
 		}
 		if ( $cron['disable_wp_cron'] ) {
-			echo '<div class="notice notice-warning"><p>' . esc_html__( 'DISABLE_WP_CRON está ativo neste site. O preload só vai avançar via cron real do servidor (ou pelo botão abaixo, que roda o evento imediatamente nesta requisição).', 'wprsm' ) . '</p>';
+			echo '<div class="notice notice-warning"><p>' . esc_html__( 'DISABLE_WP_CRON is active on this site. Preload will only advance via a real server cron (or the button below, which runs the event immediately within this request).', 'wprsm' ) . '</p>';
 			if ( $cron['next_scheduled'] ) {
 				echo '<p>' . sprintf(
-					/* translators: %s: data/hora do próximo agendamento no fuso do site. */
-					esc_html__( 'Próximo agendamento (aguardando o cron real do servidor rodar): %s', 'wprsm' ),
+					/* translators: %s: next scheduled run date/time in the site's timezone. */
+					esc_html__( 'Next scheduled run (waiting for the real server cron to fire): %s', 'wprsm' ),
 					esc_html( wp_date( 'd/m/Y H:i:s', $cron['next_scheduled'] ) )
 				) . '</p>';
 			}
 			echo '</div>';
 		}
 
-		// --- Ação: forçar execução do cron do preload agora, sem depender de wp-cron.php ---
+		// --- Action: force the preload cron to run now, without depending on wp-cron.php ---
 		echo '<div style="margin:0 0 16px;">';
 		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline;">';
 		echo '<input type="hidden" name="action" value="wprsm_run_cron_now">';
 		echo '<input type="hidden" name="redirect_to" value="' . esc_attr( $this->current_filtered_url() ) . '">';
 		wp_nonce_field( 'wprsm_run_cron_now' );
-		submit_button( __( 'Forçar execução do cron de preload agora', 'wprsm' ), 'secondary', 'submit', false );
+		submit_button( __( 'Force preload cron to run now', 'wprsm' ), 'secondary', 'submit', false );
 		echo '</form>';
-		echo ' <span class="description">' . esc_html__( 'Roda o evento imediatamente nesta requisição, sem depender do wp-cron.php ou do cron do servidor.', 'wprsm' ) . '</span>';
+		echo ' <span class="description">' . esc_html__( 'Runs the event immediately within this request, without depending on wp-cron.php or the server cron.', 'wprsm' ) . '</span>';
 		echo '</div>';
 
-		// Filtros via GET (somente leitura, sem alterar dados).
+		// Filters via GET (read-only, doesn't change data).
 		$status_filter = isset( $_GET['wprsm_status'] ) ? sanitize_key( wp_unslash( $_GET['wprsm_status'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$type_filter   = isset( $_GET['wprsm_type'] ) ? sanitize_key( wp_unslash( $_GET['wprsm_type'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$paged         = isset( $_GET['wprsm_paged'] ) ? max( 1, intval( wp_unslash( $_GET['wprsm_paged'] ) ) ) : 1; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
@@ -673,37 +675,37 @@ class WPRSM_Status_Monitor {
 
 		$base_url = esc_url( menu_page_url( self::PAGE_SLUG, false ) );
 
-		// --- Ação: gerar cache de uma URL específica agora, com prioridade, sem esperar a fila ---
+		// --- Action: generate cache for a specific URL now, with priority, skipping the queue ---
 		echo '<div style="margin:0 0 16px; padding:12px 16px; background:#fff; border:1px solid #dcdcde;">';
-		echo '<h3 style="margin-top:0;">' . esc_html__( 'Gerar cache de uma URL específica agora', 'wprsm' ) . '</h3>';
-		echo '<p class="description">' . esc_html__( 'Faz uma requisição real na URL agora, gerando o cache dela na hora — sem esperar a vez na fila de preload. Útil para priorizar a home ou qualquer página específica durante testes.', 'wprsm' ) . '</p>';
+		echo '<h3 style="margin-top:0;">' . esc_html__( 'Generate cache for a specific URL now', 'wprsm' ) . '</h3>';
+		echo '<p class="description">' . esc_html__( 'Makes a real request to the URL right now, generating its cache on the spot — without waiting its turn in the preload queue. Useful for prioritizing the homepage or any specific page during testing.', 'wprsm' ) . '</p>';
 		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">';
 		echo '<input type="hidden" name="action" value="wprsm_generate_cache">';
 		echo '<input type="hidden" name="redirect_to" value="' . esc_attr( $this->current_filtered_url() ) . '">';
 		wp_nonce_field( 'wprsm_generate_cache_url' );
 		echo '<input type="url" name="url" placeholder="' . esc_attr( home_url( '/' ) ) . '" value="' . esc_attr( home_url( '/' ) ) . '" style="min-width:360px;" required>';
-		submit_button( __( 'Gerar cache agora', 'wprsm' ), 'primary', 'submit', false );
+		submit_button( __( 'Generate cache now', 'wprsm' ), 'primary', 'submit', false );
 		echo '</form>';
 		echo '</div>';
 
-		// --- Ação: recarregar tudo ---
+		// --- Action: reload everything ---
 		echo '<div style="margin:16px 0;">';
-		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline;" onsubmit="return confirm(\'' . esc_js( __( 'Limpar e recarregar o cache de todo o site?', 'wprsm' ) ) . '\');">';
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline;" onsubmit="return confirm(\'' . esc_js( __( 'Clear and reload the cache for the whole site?', 'wprsm' ) ) . '\');">';
 		echo '<input type="hidden" name="action" value="wprsm_reload_all">';
 		echo '<input type="hidden" name="redirect_to" value="' . esc_attr( $this->current_filtered_url() ) . '">';
 		wp_nonce_field( 'wprsm_reload_all' );
-		submit_button( __( 'Limpar e recarregar cache do site inteiro', 'wprsm' ), 'primary', 'submit', false );
+		submit_button( __( 'Clear and reload cache for the whole site', 'wprsm' ), 'primary', 'submit', false );
 		echo '</form>';
 		echo '</div>';
 
-		// --- Resumo por status (contagem real via SQL, rápida, não depende do FETCH_CAP) ---
+		// --- Status summary (real count via SQL, fast, doesn't depend on FETCH_CAP) ---
 		$status_counts = $wpdb->get_results( "SELECT status, COUNT(*) as total FROM {$table} GROUP BY status", ARRAY_A ); // phpcs:ignore
 
-		echo '<h2>' . esc_html__( 'Resumo por status', 'wprsm' ) . '</h2>';
+		echo '<h2>' . esc_html__( 'Status summary', 'wprsm' ) . '</h2>';
 		echo '<div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:20px;">';
 
 		$clear_status_link = esc_url( remove_query_arg( array( 'wprsm_status', 'wprsm_paged' ), add_query_arg( array(), $base_url ) ) );
-		echo '<a href="' . $clear_status_link . '" class="button">' . esc_html__( 'Ver todos os status', 'wprsm' ) . '</a>';
+		echo '<a href="' . $clear_status_link . '" class="button">' . esc_html__( 'View all statuses', 'wprsm' ) . '</a>';
 
 		if ( $status_counts ) {
 			foreach ( $status_counts as $row ) {
@@ -716,21 +718,21 @@ class WPRSM_Status_Monitor {
 				echo '</div></a>';
 			}
 		} else {
-			echo '<p>' . esc_html__( 'Nenhum registro de preload encontrado ainda.', 'wprsm' ) . '</p>';
+			echo '<p>' . esc_html__( 'No preload records found yet.', 'wprsm' ) . '</p>';
 		}
 		echo '</div>';
 
-		// Legenda de status.
-		echo '<h3>' . esc_html__( 'Legenda de status', 'wprsm' ) . '</h3>';
+		// Status legend.
+		echo '<h3>' . esc_html__( 'Status legend', 'wprsm' ) . '</h3>';
 		echo '<ul style="list-style:none; padding:0; display:flex; gap:20px; flex-wrap:wrap; margin-bottom:24px;">';
 		foreach ( array( 'pending', 'in-progress', 'completed', 'failed' ) as $status_key ) {
 			$meta = $this->status_meta( $status_key );
 			echo '<li><span style="display:inline-block; width:12px; height:12px; border-radius:50%; background:' . esc_attr( $meta['color'] ) . '; margin-right:6px;"></span>' . esc_html( $meta['label'] ) . '</li>';
 		}
-		echo '<li><span style="display:inline-block; width:12px; height:12px; border-radius:50%; background:#fff; border:2px solid #dba617; margin-right:6px;"></span>' . esc_html__( 'Parada há mais de 15 min (possível travamento)', 'wprsm' ) . '</li>';
+		echo '<li><span style="display:inline-block; width:12px; height:12px; border-radius:50%; background:#fff; border:2px solid #dba617; margin-right:6px;"></span>' . esc_html__( 'Stuck for more than 15 min (possibly stalled)', 'wprsm' ) . '</li>';
 		echo '</ul>';
 
-		// --- Diagnóstico pontual de uma URL (se solicitado) ---
+		// --- Point-in-time diagnosis of a single URL (if requested) ---
 		if ( isset( $_GET['wprsm_check_id'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			$check_id = intval( $_GET['wprsm_check_id'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			if ( $check_id && check_admin_referer( 'wprsm_check_' . $check_id, 'wprsm_check_nonce' ) ) {
@@ -738,12 +740,12 @@ class WPRSM_Status_Monitor {
 				if ( $check_row ) {
 					$diag = $this->diagnose_url( $check_row->url );
 					$box_class = $diag['ok'] ? 'notice-info' : 'notice-error';
-					echo '<div class="notice ' . esc_attr( $box_class ) . '"><p><strong>' . esc_html__( 'Diagnóstico', 'wprsm' ) . ':</strong> ' . esc_html( $check_row->url ) . '<br>' . esc_html( $diag['summary'] ) . '</p></div>';
+					echo '<div class="notice ' . esc_attr( $box_class ) . '"><p><strong>' . esc_html__( 'Diagnosis', 'wprsm' ) . ':</strong> ' . esc_html( $check_row->url ) . '<br>' . esc_html( $diag['summary'] ) . '</p></div>';
 				}
 			}
 		}
 
-		// --- Busca as linhas (respeitando filtro de status), até o teto FETCH_CAP ---
+		// --- Fetch rows (respecting the status filter), up to the FETCH_CAP ceiling ---
 		if ( $status_filter ) {
 			$fetched = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE status = %s ORDER BY last_accessed DESC LIMIT %d", $status_filter, self::FETCH_CAP ) ); // phpcs:ignore
 		} else {
@@ -752,7 +754,7 @@ class WPRSM_Status_Monitor {
 
 		$fetched_count = is_array( $fetched ) ? count( $fetched ) : 0;
 
-		// Classifica todas as URLs de uma vez, usando o cache persistente (performance).
+		// Classify all URLs at once, using the persistent cache (performance).
 		$urls_to_classify = wp_list_pluck( (array) $fetched, 'url' );
 		$type_map         = $this->classify_urls_cached( $urls_to_classify );
 
@@ -777,14 +779,14 @@ class WPRSM_Status_Monitor {
 			);
 		}
 
-		// Aplica filtro de tipo, se houver.
+		// Apply the type filter, if any.
 		if ( $type_filter && isset( $type_labels[ $type_filter ] ) ) {
 			$classified = array_values( array_filter( $classified, function( $item ) use ( $type_filter ) {
 				return $item['type'] === $type_filter;
 			} ) );
 		}
 
-		// --- Ordenação ---
+		// --- Sorting ---
 		$sortable = array( 'url', 'type', 'status', 'last_accessed' );
 		if ( in_array( $orderby, $sortable, true ) ) {
 			usort( $classified, function( $a, $b ) use ( $orderby, $order ) {
@@ -800,13 +802,13 @@ class WPRSM_Status_Monitor {
 			} );
 		}
 
-		// --- Filtro por tipo (chips) ---
-		echo '<h2>' . esc_html__( 'Filtrar por tipo de conteúdo', 'wprsm' ) . '</h2>';
+		// --- Type filter (chips) ---
+		echo '<h2>' . esc_html__( 'Filter by content type', 'wprsm' ) . '</h2>';
 		echo '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;">';
 
 		$clear_type_link = esc_url( remove_query_arg( array( 'wprsm_type', 'wprsm_paged' ), add_query_arg( array(), $base_url . ( $status_filter ? '&wprsm_status=' . rawurlencode( $status_filter ) : '' ) ) ) );
 		$all_types_class = $type_filter ? 'button' : 'button button-primary';
-		echo '<a href="' . $clear_type_link . '" class="' . esc_attr( $all_types_class ) . '">' . esc_html__( 'Todos os tipos', 'wprsm' ) . '</a>';
+		echo '<a href="' . $clear_type_link . '" class="' . esc_attr( $all_types_class ) . '">' . esc_html__( 'All types', 'wprsm' ) . '</a>';
 
 		foreach ( $type_labels as $key => $label ) {
 			$link_args = array( 'wprsm_type' => $key, 'wprsm_paged' => false );
@@ -822,13 +824,13 @@ class WPRSM_Status_Monitor {
 
 		if ( $fetched_count >= self::FETCH_CAP ) {
 			echo '<div class="notice notice-warning"><p>' . sprintf(
-				/* translators: %d: número máximo de linhas processadas. */
-				esc_html__( 'Mostrando os %d registros mais recentes para este filtro de status. Refine por status ou tipo para ver um recorte diferente.', 'wprsm' ),
+				/* translators: %d: max number of rows processed. */
+				esc_html__( 'Showing the %d most recent records for this status filter. Narrow by status or type to see a different slice.', 'wprsm' ),
 				intval( self::FETCH_CAP )
 			) . '</p></div>';
 		}
 
-		// --- Paginação ---
+		// --- Pagination ---
 		$total_filtered = count( $classified );
 		$total_pages    = max( 1, (int) ceil( $total_filtered / self::PER_PAGE ) );
 		$paged          = min( $paged, $total_pages );
@@ -837,19 +839,19 @@ class WPRSM_Status_Monitor {
 
 		echo '<h2>' . esc_html__( 'URLs', 'wprsm' ) . '</h2>';
 		echo '<p>' . sprintf(
-			/* translators: 1: total de itens no filtro atual, 2: página atual, 3: total de páginas. */
-			esc_html__( '%1$d URL(s) neste filtro — página %2$d de %3$d.', 'wprsm' ),
+			/* translators: 1: total items in the current filter, 2: current page, 3: total pages. */
+			esc_html__( '%1$d URL(s) in this filter — page %2$d of %3$d.', 'wprsm' ),
 			intval( $total_filtered ),
 			intval( $paged ),
 			intval( $total_pages )
 		) . '</p>';
 
 		if ( ! $page_items ) {
-			echo '<p>' . esc_html__( 'Nenhuma URL encontrada para este filtro.', 'wprsm' ) . '</p></div>';
+			echo '<p>' . esc_html__( 'No URLs found for this filter.', 'wprsm' ) . '</p></div>';
 			return;
 		}
 
-		// Helper pra montar link de ordenação de uma coluna.
+		// Helper to build a column's sort link.
 		$sort_link = function( $column, $label ) use ( $base_url, $status_filter, $type_filter, $orderby, $order ) {
 			$next_order = ( $orderby === $column && 'asc' === $order ) ? 'desc' : 'asc';
 			$args       = array( 'wprsm_orderby' => $column, 'wprsm_order' => $next_order );
@@ -871,10 +873,10 @@ class WPRSM_Status_Monitor {
 		echo '<table class="widefat striped">';
 		echo '<thead><tr>';
 		echo '<th>' . $sort_link( 'url', __( 'URL', 'wprsm' ) ) . '</th>'; // phpcs:ignore
-		echo '<th>' . $sort_link( 'type', __( 'Tipo', 'wprsm' ) ) . '</th>'; // phpcs:ignore
+		echo '<th>' . $sort_link( 'type', __( 'Type', 'wprsm' ) ) . '</th>'; // phpcs:ignore
 		echo '<th>' . $sort_link( 'status', __( 'Status', 'wprsm' ) ) . '</th>'; // phpcs:ignore
-		echo '<th>' . $sort_link( 'last_accessed', __( 'Última atualização', 'wprsm' ) ) . '</th>'; // phpcs:ignore
-		echo '<th>' . esc_html__( 'Ações', 'wprsm' ) . '</th>';
+		echo '<th>' . $sort_link( 'last_accessed', __( 'Last updated', 'wprsm' ) ) . '</th>'; // phpcs:ignore
+		echo '<th>' . esc_html__( 'Actions', 'wprsm' ) . '</th>';
 		echo '</tr></thead><tbody>';
 
 		foreach ( $page_items as $item ) {
@@ -888,46 +890,46 @@ class WPRSM_Status_Monitor {
 			echo '<td>' . esc_html( $type_label ) . '</td>';
 			echo '<td><span style="color:' . esc_attr( $meta['color'] ) . '; font-weight:600;">&#9679; ' . esc_html( $meta['label'] );
 			if ( $item['is_stuck'] ) {
-				echo ' <span style="color:#dba617;" title="' . esc_attr__( 'Parada há mais de 15 minutos', 'wprsm' ) . '">&#9888;</span>';
+				echo ' <span style="color:#dba617;" title="' . esc_attr__( 'Stuck for more than 15 minutes', 'wprsm' ) . '">&#9888;</span>';
 			}
 			echo '</span></td>';
 			echo '<td>' . esc_html( isset( $row->last_accessed ) ? $row->last_accessed : '—' ) . '</td>';
 
 			echo '<td style="white-space:nowrap;">';
 
-			// Diagnosticar causa (só faz sentido para failed, mas deixo disponível sempre).
+			// Diagnose cause (mostly useful for failed rows, but kept available everywhere).
 			$check_url = wp_nonce_url(
 				add_query_arg( 'wprsm_check_id', $row->id, $this->current_filtered_url() ),
 				'wprsm_check_' . $row->id,
 				'wprsm_check_nonce'
 			);
-			echo '<a href="' . esc_url( $check_url ) . '" class="button button-small">' . esc_html__( 'Diagnosticar', 'wprsm' ) . '</a> ';
+			echo '<a href="' . esc_url( $check_url ) . '" class="button button-small">' . esc_html__( 'Diagnose', 'wprsm' ) . '</a> ';
 
-			// Gerar cache agora (prioridade, sem esperar a fila).
+			// Generate cache now (priority, skips the queue).
 			echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline;">';
 			echo '<input type="hidden" name="action" value="wprsm_generate_cache">';
 			echo '<input type="hidden" name="id" value="' . intval( $row->id ) . '">';
 			echo '<input type="hidden" name="redirect_to" value="' . $redirect_to . '">'; // phpcs:ignore
 			wp_nonce_field( 'wprsm_generate_cache_' . $row->id );
-			echo '<button type="submit" class="button button-small button-primary">' . esc_html__( 'Gerar cache agora', 'wprsm' ) . '</button>';
+			echo '<button type="submit" class="button button-small button-primary">' . esc_html__( 'Generate cache now', 'wprsm' ) . '</button>';
 			echo '</form> ';
 
-			// Recarregar URL individual.
+			// Reload a single URL.
 			echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline;">';
 			echo '<input type="hidden" name="action" value="wprsm_reload_url">';
 			echo '<input type="hidden" name="id" value="' . intval( $row->id ) . '">';
 			echo '<input type="hidden" name="redirect_to" value="' . $redirect_to . '">'; // phpcs:ignore
 			wp_nonce_field( 'wprsm_reload_url_' . $row->id );
-			echo '<button type="submit" class="button button-small">' . esc_html__( 'Recarregar', 'wprsm' ) . '</button>';
+			echo '<button type="submit" class="button button-small">' . esc_html__( 'Reload', 'wprsm' ) . '</button>';
 			echo '</form> ';
 
-			// Remover da fila.
-			echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline;" onsubmit="return confirm(\'' . esc_js( __( 'Remover esta URL da fila de preload?', 'wprsm' ) ) . '\');">';
+			// Remove from the queue.
+			echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline;" onsubmit="return confirm(\'' . esc_js( __( 'Remove this URL from the preload queue?', 'wprsm' ) ) . '\');">';
 			echo '<input type="hidden" name="action" value="wprsm_remove_url">';
 			echo '<input type="hidden" name="id" value="' . intval( $row->id ) . '">';
 			echo '<input type="hidden" name="redirect_to" value="' . $redirect_to . '">'; // phpcs:ignore
 			wp_nonce_field( 'wprsm_remove_url_' . $row->id );
-			echo '<button type="submit" class="button button-small">' . esc_html__( 'Remover', 'wprsm' ) . '</button>';
+			echo '<button type="submit" class="button button-small">' . esc_html__( 'Remove', 'wprsm' ) . '</button>';
 			echo '</form>';
 
 			echo '</td>';
@@ -936,7 +938,7 @@ class WPRSM_Status_Monitor {
 
 		echo '</tbody></table>';
 
-		// Links de paginação.
+		// Pagination links.
 		if ( $total_pages > 1 ) {
 			echo '<div style="margin-top:16px; display:flex; gap:8px; align-items:center;">';
 
@@ -954,19 +956,19 @@ class WPRSM_Status_Monitor {
 
 			if ( $paged > 1 ) {
 				$prev_link = esc_url( add_query_arg( array_merge( $pag_base_args, array( 'wprsm_paged' => $paged - 1 ) ), $base_url ) );
-				echo '<a href="' . $prev_link . '" class="button">&laquo; ' . esc_html__( 'Anterior', 'wprsm' ) . '</a>';
+				echo '<a href="' . $prev_link . '" class="button">&laquo; ' . esc_html__( 'Previous', 'wprsm' ) . '</a>';
 			}
 
 			echo '<span>' . sprintf(
-				/* translators: 1: página atual, 2: total de páginas. */
-				esc_html__( 'Página %1$d de %2$d', 'wprsm' ),
+				/* translators: 1: current page, 2: total pages. */
+				esc_html__( 'Page %1$d of %2$d', 'wprsm' ),
 				intval( $paged ),
 				intval( $total_pages )
 			) . '</span>';
 
 			if ( $paged < $total_pages ) {
 				$next_link = esc_url( add_query_arg( array_merge( $pag_base_args, array( 'wprsm_paged' => $paged + 1 ) ), $base_url ) );
-				echo '<a href="' . $next_link . '" class="button">' . esc_html__( 'Próxima', 'wprsm' ) . ' &raquo;</a>';
+				echo '<a href="' . $next_link . '" class="button">' . esc_html__( 'Next', 'wprsm' ) . ' &raquo;</a>';
 			}
 
 			echo '</div>';
